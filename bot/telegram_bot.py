@@ -675,6 +675,9 @@ class ChatGPTTelegramBot:
                 if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
                     logging.info('Message is a reply to the bot, allowing...')
                 else:
+                    # keep in history user messages
+                    self.openai.add_to_group_history(chat_id, update.effective_user.full_name, prompt)
+
                     logging.warning('Message does not start with trigger keyword, ignoring...')
                     return
 
@@ -767,7 +770,12 @@ class ChatGPTTelegramBot:
             else:
                 async def _reply():
                     nonlocal total_tokens
-                    response, total_tokens = await self.openai.get_chat_response(chat_id=chat_id, query=prompt)
+                    response, total_tokens = await self.openai.get_chat_response(
+                        chat_id=chat_id,
+                        query=prompt,
+                        is_group_chat=is_group_chat(update),
+                        username=update.effective_user.name
+                    )
 
                     if is_direct_result(response):
                         return await handle_direct_result(self.config, update, response)

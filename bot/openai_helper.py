@@ -27,7 +27,8 @@ GPT_4_VISION_MODELS = ("gpt-4o",)
 GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-4-turbo-preview", "gpt-4-turbo", "gpt-4-turbo-2024-04-09")
 GPT_4O_MODELS = ("gpt-4o", "gpt-4o-mini", "chatgpt-4o-latest")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
-GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS
+GEMINI = ("google/gemini-2.0-flash-thinking-exp:free", )
+GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS + GEMINI
 
 def default_max_tokens(model: str) -> int:
     """
@@ -104,7 +105,11 @@ class OpenAIHelper:
         :param plugin_manager: The plugin manager
         """
         http_client = httpx.AsyncClient(proxy=config['proxy']) if 'proxy' in config else None
-        self.client = openai.AsyncOpenAI(api_key=config['api_key'], http_client=http_client)
+        self.client = openai.AsyncOpenAI(
+            api_key=config['api_key'],
+            base_url="https://openrouter.ai/api/v1",
+            http_client=http_client,
+        )
         self.config = config
         self.plugin_manager = plugin_manager
         self.conversations: dict[int: list] = {}  # {chat_id: history}
@@ -121,7 +126,11 @@ class OpenAIHelper:
             self.reset_chat_history(chat_id)
         return len(self.conversations[chat_id]), self.__count_tokens(self.conversations[chat_id])
 
-    async def get_chat_response(self, chat_id: int, query: str) -> tuple[str, str]:
+    async def get_chat_response(self,
+                                chat_id: int,
+                                query: str,
+                                username: str = None,
+                                is_group_chat: bool = False) -> tuple[str, str]:
         """
         Gets a full response from the GPT model.
         :param chat_id: The chat ID
@@ -129,7 +138,7 @@ class OpenAIHelper:
         :return: The answer from the model and the number of tokens used
         """
         plugins_used = ()
-        response = await self.__common_get_chat_response(chat_id, query)
+        response = await self.__common_get_chat_response(chat_id, query, is_group_chat=is_group_chat, username=username)
         if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
             response, plugins_used = await self.__handle_function_call(chat_id, response)
             if is_direct_result(response):
@@ -208,7 +217,12 @@ class OpenAIHelper:
         wait=wait_fixed(20),
         stop=stop_after_attempt(3)
     )
-    async def __common_get_chat_response(self, chat_id: int, query: str, stream=False):
+    async def __common_get_chat_response(self,
+                                         chat_id: int,
+                                         query: str,
+                                         stream=False,
+                                         username: str = None,
+                                         is_group_chat: bool = False):
         """
         Request a response from the GPT model.
         :param chat_id: The chat ID
@@ -222,7 +236,10 @@ class OpenAIHelper:
 
             self.last_updated[chat_id] = datetime.datetime.now()
 
-            self.__add_to_history(chat_id, role="user", content=query)
+            if is_group_chat:
+                self.add_to_group_history(chat_id, username, query)
+            else:
+                self.__add_to_history(chat_id, role="user", content=query)
 
             # Summarize the chat history if it's too long to avoid excessive token usage
             token_count = self.__count_tokens(self.conversations[chat_id])
@@ -589,6 +606,9 @@ class OpenAIHelper:
         Adds a function call to the conversation history
         """
         self.conversations[chat_id].append({"role": "function", "name": function_name, "content": content})
+
+    def add_to_group_history(self, chat_id, username: str, content: str):
+        self.__add_to_history(chat_id, "user", f'<user>{username}</user>: <message>{content}</message>')
 
     def __add_to_history(self, chat_id, role, content):
         """
