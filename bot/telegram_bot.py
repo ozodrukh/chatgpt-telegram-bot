@@ -660,26 +660,31 @@ class ChatGPTTelegramBot:
         prompt = message_text(update.message)
         self.last_message[chat_id] = prompt
 
-        if is_group_chat(update):
-            trigger_keyword = self.config['group_trigger_keyword']
+        try:
+            if is_group_chat(update):
+                trigger_keyword = self.config['group_trigger_keyword']
 
-            if prompt.lower().startswith(trigger_keyword.lower()) or update.message.text.lower().startswith('/chat'):
-                if prompt.lower().startswith(trigger_keyword.lower()):
-                    prompt = prompt[len(trigger_keyword):].strip()
+                if prompt.lower().startswith(trigger_keyword.lower()) or update.message.text.lower().startswith('/chat'):
+                    if prompt.lower().startswith(trigger_keyword.lower()):
+                        prompt = prompt[len(trigger_keyword):].strip()
 
-                if update.message.reply_to_message and \
-                        update.message.reply_to_message.text and \
-                        update.message.reply_to_message.from_user.id != context.bot.id:
-                    prompt = f'"{update.message.reply_to_message.text}" {prompt}'
-            else:
-                if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
-                    logging.info('Message is a reply to the bot, allowing...')
+                    if update.message.reply_to_message and \
+                            update.message.reply_to_message.text and \
+                            update.message.reply_to_message.from_user.id != context.bot.id:
+                        prompt = f'"{update.message.reply_to_message.text}" {prompt}'
                 else:
-                    # keep in history user messages
-                    self.openai.add_to_group_history(chat_id, update.effective_user.full_name, prompt)
+                    if update.message.reply_to_message and update.message.reply_to_message.from_user.id == context.bot.id:
+                        logging.info('Message is a reply to the bot, allowing...')
+                    else:
+                        # keep in history user messages
+                        self.openai.add_to_group_history(chat_id, update.effective_user.full_name, prompt)
 
-                    logging.warning('Message does not start with trigger keyword, ignoring...')
-                    return
+                        logging.warning('Message does not start with trigger keyword, ignoring...')
+                        return
+        except Exception as e:
+            import traceback
+            logging.error(traceback.format_exc())
+            logging.error(e)
 
         try:
             total_tokens = 0

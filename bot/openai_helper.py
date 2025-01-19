@@ -2,6 +2,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import google.generativeai as genai
 
 import tiktoken
 
@@ -27,7 +28,7 @@ GPT_4_VISION_MODELS = ("gpt-4o",)
 GPT_4_128K_MODELS = ("gpt-4-1106-preview", "gpt-4-0125-preview", "gpt-4-turbo-preview", "gpt-4-turbo", "gpt-4-turbo-2024-04-09")
 GPT_4O_MODELS = ("gpt-4o", "gpt-4o-mini", "chatgpt-4o-latest")
 O_MODELS = ("o1", "o1-mini", "o1-preview")
-GEMINI = ("google/gemini-2.0-flash-thinking-exp:free",)
+GEMINI = ("google/gemini-2.0-flash-thinking-exp:free", "google/gemini-2.0-flash-exp:free")
 GPT_ALL_MODELS = GPT_3_MODELS + GPT_3_16K_MODELS + GPT_4_MODELS + GPT_4_32K_MODELS + GPT_4_VISION_MODELS + GPT_4_128K_MODELS + GPT_4O_MODELS + O_MODELS + GEMINI
 
 def default_max_tokens(model: str) -> int:
@@ -55,6 +56,8 @@ def default_max_tokens(model: str) -> int:
         return 4096
     elif model in O_MODELS:
         return 4096
+    elif model in GEMINI:
+        return 8192
 
 
 def are_functions_available(model: str) -> bool:
@@ -146,7 +149,7 @@ class OpenAIHelper:
 
         answer = ''
 
-        if len(response.choices) > 1 and self.config['n_choices'] > 1:
+        if response.choices is not None and len(response.choices) > 1 and self.config['n_choices'] > 1:
             for index, choice in enumerate(response.choices):
                 content = choice.message.content.strip()
                 if index == 0:
@@ -273,8 +276,8 @@ class OpenAIHelper:
             if self.config['enable_functions'] and not self.conversations_vision[chat_id]:
                 functions = self.plugin_manager.get_functions_specs()
                 if len(functions) > 0:
-                    common_args['functions'] = self.plugin_manager.get_functions_specs()
-                    common_args['function_call'] = 'auto'
+                    common_args['tools'] = self.plugin_manager.get_functions_specs()
+                    common_args['tool_choice'] = 'auto'
             return await self.client.chat.completions.create(**common_args)
 
         except openai.RateLimitError as e:
@@ -293,11 +296,11 @@ class OpenAIHelper:
             async for item in response:
                 if len(item.choices) > 0:
                     first_choice = item.choices[0]
-                    if first_choice.delta and first_choice.delta.function_call:
-                        if first_choice.delta.function_call.name:
-                            function_name += first_choice.delta.function_call.name
-                        if first_choice.delta.function_call.arguments:
-                            arguments += first_choice.delta.function_call.arguments
+                    if first_choice.delta and first_choice.delta.tool_calls:
+                        if first_choice.delta.tool_calls.name:
+                            function_name += first_choice.delta.tool_calls.name
+                        if first_choice.delta.tool_calls.arguments:
+                            arguments += first_choice.delta.tool_calls.arguments
                     elif first_choice.finish_reason and first_choice.finish_reason == 'function_call':
                         break
                     else:
@@ -305,13 +308,13 @@ class OpenAIHelper:
                 else:
                     return response, plugins_used
         else:
-            if len(response.choices) > 0:
+            if response.choices is not None and len(response.choices) > 0:
                 first_choice = response.choices[0]
-                if first_choice.message.function_call:
-                    if first_choice.message.function_call.name:
-                        function_name += first_choice.message.function_call.name
-                    if first_choice.message.function_call.arguments:
-                        arguments += first_choice.message.function_call.arguments
+                if first_choice.message.tool_calls:
+                    if first_choice.message.tool_calls.name:
+                        function_name += first_choice.message.tool_calls.name
+                    if first_choice.message.tool_calls.arguments:
+                        arguments += first_choice.message.tool_calls.arguments
                 else:
                     return response, plugins_used
             else:
@@ -333,8 +336,8 @@ class OpenAIHelper:
         response = await self.client.chat.completions.create(
             model=self.config['model'],
             messages=self.conversations[chat_id],
-            functions=self.plugin_manager.get_functions_specs(),
-            function_call='auto' if times < self.config['functions_max_consecutive_calls'] else 'none',
+            tools=self.plugin_manager.get_functions_specs(),
+            tool_choice='auto' if times < self.config['functions_max_consecutive_calls'] else 'none',
             stream=stream
         )
         return await self.__handle_function_call(chat_id, response, stream, times + 1, plugins_used)
@@ -584,7 +587,8 @@ class OpenAIHelper:
         Resets the conversation history.
         """
         if content == '':
-            content = self.config['assistant_prompt']
+            content = self.config['prompts']['assistant_prompt']
+
         self.conversations[chat_id] = [{"role": "assistant" if self.config['model'] in O_MODELS else "system", "content": content}]
         self.conversations_vision[chat_id] = False
 
@@ -608,6 +612,9 @@ class OpenAIHelper:
         self.conversations[chat_id].append({"role": "function", "name": function_name, "content": content})
 
     def add_to_group_history(self, chat_id, username: str, content: str):
+        if chat_id not in self.conversations or self.__max_age_reached(chat_id):
+            self.reset_chat_history(chat_id)
+
         self.__add_to_history(chat_id, "user", f'<user>{username}</user>: <message>{content}</message>')
 
     def __add_to_history(self, chat_id, role, content):
@@ -662,7 +669,7 @@ class OpenAIHelper:
                 return 65_536
 
         elif self.config['model'] in GEMINI:
-            return 2_000_000
+            return 1_048_576
 
         raise NotImplementedError(
             f"Max tokens for model {self.config['model']} is not implemented yet."

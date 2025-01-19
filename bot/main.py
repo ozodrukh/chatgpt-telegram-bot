@@ -7,6 +7,13 @@ from plugin_manager import PluginManager
 from openai_helper import OpenAIHelper, default_max_tokens, are_functions_available
 from telegram_bot import ChatGPTTelegramBot
 
+parent_dir_path = os.path.join(os.path.dirname(__file__), os.pardir)
+prompts_file_path = os.path.join(parent_dir_path, 'prompts.json')
+
+import json
+
+with open(prompts_file_path, 'r', encoding='utf-8') as f:
+    prompts = json.load(f)
 
 def main():
     # Read .env file
@@ -17,7 +24,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    # logging.getLogger("httpx").setLevel(logging.WARNING)
 
     # Check if the required environment variables are set
     required_values = ['TELEGRAM_BOT_TOKEN', 'OPENAI_API_KEY']
@@ -38,7 +45,7 @@ def main():
         'proxy': os.environ.get('PROXY', None) or os.environ.get('OPENAI_PROXY', None),
         'max_history_size': int(os.environ.get('MAX_HISTORY_SIZE', 15)),
         'max_conversation_age_minutes': int(os.environ.get('MAX_CONVERSATION_AGE_MINUTES', 60*24*30)),
-        'assistant_prompt': os.environ.get('ASSISTANT_PROMPT', 'You are a helpful assistant.'),
+        'prompts': prompts,
         'max_tokens': int(os.environ.get('MAX_TOKENS', max_tokens_default)),
         'n_choices': int(os.environ.get('N_CHOICES', 1)),
         'temperature': float(os.environ.get('TEMPERATURE', 1.0)),
